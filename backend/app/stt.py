@@ -1,115 +1,113 @@
-"""Streaming speech-to-text over Deepgram's live WebSocket API.
+"""Streaming speech-to-text over the Gemini Live API.
 
-One DeepgramStream per audio channel (interviewer tab audio, candidate mic). Audio is
-forwarded as-is (WebM/Opus chunks from MediaRecorder; Deepgram detects the container).
-Finalized words are buffered until Deepgram signals UtteranceEnd, at which point the
-whole utterance is handed to `on_utterance`.
+One LiveTranscriber per audio channel (interviewer tab audio, candidate mic). The client
+sends raw 16 kHz mono int16 PCM. Gemini's voice activity detection decides when an
+utterance is complete: interim transcriptions stream in while someone speaks, and a final
+`input_transcription` arrives once they stop, which is handed to `on_utterance`.
+
+Live sessions have a limited lifetime, so the transcriber reconnects transparently when
+the server closes the session or sends GoAway. Audio sent while reconnecting is dropped.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Awaitable, Callable
-from urllib.parse import urlencode
 
-from websockets.asyncio.client import ClientConnection, connect
-from websockets.exceptions import ConnectionClosed
+from google import genai
+from google.genai import types
 
 from .config import get_settings
 
 log = logging.getLogger(__name__)
 
-DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
-KEEPALIVE_SECONDS = 5
+PCM_MIME = "audio/pcm;rate=16000"
+RECONNECT_DELAY_SECONDS = 1
 
 TranscriptCallback = Callable[[str, bool], Awaitable[None]]  # (text, is_final)
 UtteranceCallback = Callable[[str], Awaitable[None]]
 
 
-class DeepgramStream:
-    def __init__(self, on_transcript: TranscriptCallback, on_utterance: UtteranceCallback) -> None:
+class LiveTranscriber:
+    def __init__(
+        self, client: genai.Client, on_transcript: TranscriptCallback, on_utterance: UtteranceCallback
+    ) -> None:
+        self._client = client
         self._on_transcript = on_transcript
         self._on_utterance = on_utterance
-        self._ws: ClientConnection | None = None
-        self._tasks: list[asyncio.Task] = []
-        self._finals: list[str] = []
+        self._session = None
+        self._ready = asyncio.Event()
+        self._closed = False
+        self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        s = get_settings()
-        if not s.deepgram_api_key:
-            raise RuntimeError("DEEPGRAM_API_KEY is not configured")
-        params = {
-            "model": s.deepgram_model,
-            "language": s.deepgram_language,
-            "smart_format": "true",
-            "punctuate": "true",
-            "interim_results": "true",  # required for utterance_end_ms
-            "utterance_end_ms": str(s.utterance_end_ms),
-            "endpointing": str(s.endpointing_ms),
-            "vad_events": "true",
-        }
-        self._ws = await connect(
-            f"{DEEPGRAM_URL}?{urlencode(params)}",
-            additional_headers={"Authorization": f"Token {s.deepgram_api_key}"},
-            max_size=None,
-        )
-        self._tasks = [asyncio.create_task(self._receive()), asyncio.create_task(self._keepalive())]
+        self._task = asyncio.create_task(self._run())
+        # Wait for the first connection so setup errors (bad key, unknown model) surface here.
+        ready = asyncio.create_task(self._ready.wait())
+        done, _ = await asyncio.wait({self._task, ready}, return_when=asyncio.FIRST_COMPLETED)
+        ready.cancel()
+        if self._task in done:
+            self._task.result()  # re-raise the connection error
+            raise RuntimeError("Transcription session ended before it was ready")
 
-    async def send(self, audio: bytes) -> None:
-        if self._ws is not None:
-            await self._ws.send(audio)
+    async def send(self, pcm: bytes) -> None:
+        if self._session is None:
+            return
+        try:
+            await self._session.send_realtime_input(audio=types.Blob(data=pcm, mime_type=PCM_MIME))
+        except Exception:
+            log.debug("Dropping audio while the live session reconnects", exc_info=True)
 
     async def close(self) -> None:
-        if self._ws is not None:
+        self._closed = True
+        if self._task:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+
+    async def _run(self) -> None:
+        s = get_settings()
+        config = types.LiveConnectConfig(
+            response_modalities=[types.Modality.TEXT],
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+        )
+        first = True
+        while not self._closed:
             try:
-                await self._ws.send(json.dumps({"type": "CloseStream"}))
-                await asyncio.wait_for(self._tasks[0], timeout=2)
-            except (ConnectionClosed, asyncio.TimeoutError):
-                pass
-            await self._ws.close()
-        for task in self._tasks:
-            task.cancel()
-        await self._flush()
+                async with self._client.aio.live.connect(model=s.stt_model, config=config) as session:
+                    self._session = session
+                    self._ready.set()
+                    first = False
+                    await self._receive(session)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                if first:
+                    raise
+                log.warning("Live transcription session failed; reconnecting", exc_info=True)
+            finally:
+                self._session = None
+            if not self._closed:
+                await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
-    async def _keepalive(self) -> None:
-        assert self._ws is not None
-        try:
-            while True:
-                await asyncio.sleep(KEEPALIVE_SECONDS)
-                await self._ws.send(json.dumps({"type": "KeepAlive"}))
-        except ConnectionClosed:
-            pass
-
-    async def _flush(self) -> None:
-        if self._finals:
-            text = " ".join(self._finals).strip()
-            self._finals.clear()
-            if text:
-                await self._on_utterance(text)
-
-    async def _receive(self) -> None:
-        assert self._ws is not None
-        try:
-            async for raw in self._ws:
-                msg = json.loads(raw)
-                kind = msg.get("type")
-                if kind == "Results":
-                    alts = msg.get("channel", {}).get("alternatives") or [{}]
-                    text = alts[0].get("transcript", "").strip()
-                    if not text:
-                        continue
-                    if msg.get("is_final"):
-                        self._finals.append(text)
+    async def _receive(self, session) -> None:
+        # receive() yields one model turn at a time; keep reading until the session ends.
+        while not self._closed:
+            got_any = False
+            async for msg in session.receive():
+                got_any = True
+                if msg.go_away is not None:
+                    log.info("Live session GoAway (time left %s); reconnecting", msg.go_away.time_left)
+                    return
+                content = msg.server_content
+                if content is None:
+                    continue
+                if content.interim_input_transcription and content.interim_input_transcription.text:
+                    await self._on_transcript(content.interim_input_transcription.text.strip(), False)
+                if content.input_transcription and content.input_transcription.text:
+                    text = content.input_transcription.text.strip()
+                    if text:
                         await self._on_transcript(text, True)
-                    else:
-                        await self._on_transcript(text, False)
-                elif kind == "UtteranceEnd":
-                    await self._flush()
-                elif kind == "Error":
-                    log.error("Deepgram error: %s", msg)
-        except ConnectionClosed as exc:
-            log.info("Deepgram connection closed: %s", exc)
-        except Exception:
-            log.exception("Deepgram receive loop failed")
+                        await self._on_utterance(text)
+            if not got_any:
+                return  # stream closed by the server

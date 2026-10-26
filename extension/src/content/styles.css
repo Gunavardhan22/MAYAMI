@@ -1,0 +1,61 @@
+/* Compiled by Tailwind and injected into the overlay's shadow root (imported with ?inline).
+   Preflight is off, so the small scoped reset below replaces it. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Inherited properties (letter-spacing, font, color...) still cross the shadow boundary from
+   the host element, and the page can target the host with `* { ... !important }`. For
+   !important rules the shadow tree's own styles win, so reset the host here. */
+:host {
+  all: initial !important;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483647 !important;
+  pointer-events: none !important;
+}
+
+.mayami-root {
+  font-family: theme("fontFamily.sans");
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  color: #e4e4e7;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mayami-root *,
+.mayami-root *::before,
+.mayami-root *::after {
+  box-sizing: border-box;
+}
+
+:where(.mayami-root) :where(p, ul, ol, pre, h1, h2, h3, h4) {
+  margin: 0;
+}
+
+:where(.mayami-root) :where(button, input) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+}
+
+:where(.mayami-root) :where(button) {
+  cursor: pointer;
+}
+
+.mayami-scroll-x,
+.mayami-scroll-y {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.mayami-scroll-x {
+  scroll-behavior: smooth;
+}

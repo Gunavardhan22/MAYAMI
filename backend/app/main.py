@@ -1,12 +1,15 @@
+import asyncio
 import hmac
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
+from google import genai
 
 from .config import get_settings
-from .llm import AnswerGenerator
+from .agents import HedgedGemini
 from .parsing import extract_text
 from .rag import get_store
 from .session import InterviewSession
@@ -14,14 +17,24 @@ from .session import InterviewSession
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 settings = get_settings()
-app = FastAPI(title="MAYAMI", version="0.1.0")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await asyncio.to_thread(get_store().warmup)
+    yield
+
+
+app = FastAPI(title="MAYAMI", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
     allow_methods=["*"],
     allow_headers=["*"],
 )
-generator = AnswerGenerator()
+# Without a key the client is still built so /health works; calls fail until one is set.
+client = genai.Client(api_key=settings.google_api_key or "unset")
+gemini = HedgedGemini(client)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
@@ -46,7 +59,8 @@ def _profile(profile_id: str) -> str:
 async def health() -> dict:
     return {
         "status": "ok",
-        "stt_configured": bool(settings.deepgram_api_key),
+        "google_configured": bool(settings.google_api_key),
+        "stt_model": settings.stt_model,
         "llm_model": settings.llm_model,
     }
 
@@ -104,4 +118,4 @@ async def interview_socket(
         await ws.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc))
         return
     await ws.accept()
-    await InterviewSession(ws, profile, generator).run()
+    await InterviewSession(ws, profile, client, gemini).run()

@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 
 import chromadb
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 from .config import get_settings
 from .parsing import BASE_SKILLS, Chunk, chunk_job_description, chunk_resume
@@ -34,6 +35,8 @@ def _split(value: str | None) -> set[str]:
 class ProfileStore:
     def __init__(self, path: str) -> None:
         self._client = chromadb.PersistentClient(path=path)
+        # Same model Chroma uses by default, held here so queries can embed once.
+        self._embed = DefaultEmbeddingFunction()
 
     @staticmethod
     def validate_profile_id(profile_id: str) -> str:
@@ -43,7 +46,9 @@ class ProfileStore:
 
     def _collection(self, profile_id: str):
         name = f"profile_{self.validate_profile_id(profile_id)}"
-        return self._client.get_or_create_collection(name=name, metadata={"hnsw:space": "cosine"})
+        return self._client.get_or_create_collection(
+            name=name, embedding_function=self._embed, metadata={"hnsw:space": "cosine"}
+        )
 
     def _replace(self, profile_id: str, kind: str, chunks: list[Chunk], meta: dict) -> int:
         col = self._collection(profile_id)
@@ -94,20 +99,25 @@ class ProfileStore:
     def delete(self, profile_id: str) -> None:
         self._client.delete_collection(f"profile_{self.validate_profile_id(profile_id)}")
 
-    def _query(self, col, question: str, kind: str, k: int) -> list[str]:
+    def warmup(self) -> None:
+        """Load the embedding model now so the first question doesn't pay for it."""
+        self._embed(["warmup"])
+
+    def _query(self, col, embedding, kind: str, k: int) -> list[str]:
         available = len(col.get(where={"kind": kind}, include=[])["ids"])
         if not available:
             return []
-        res = col.query(query_texts=[question], n_results=min(k, available), where={"kind": kind})
+        res = col.query(query_embeddings=embedding, n_results=min(k, available), where={"kind": kind})
         return res["documents"][0]
 
     def retrieve(self, profile_id: str, question: str) -> RetrievedContext:
         settings = get_settings()
         col = self._collection(profile_id)
         meta = col.metadata or {}
+        embedding = self._embed([question])  # embed once, query both document kinds
         return RetrievedContext(
-            experiences=self._query(col, question, "resume", settings.resume_top_k),
-            requirements=self._query(col, question, "jd", settings.jd_top_k),
+            experiences=self._query(col, embedding, "resume", settings.resume_top_k),
+            requirements=self._query(col, embedding, "jd", settings.jd_top_k),
             matched_competencies=sorted(_split(meta.get("resume_skills")) & _split(meta.get("jd_skills"))),
         )
 

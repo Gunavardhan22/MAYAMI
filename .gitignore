@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+backend/data/
+*.zip
+requirenments.txt
+extension/node_modules/
+extension/dist/
+extension/.harness/
+requirenments./
+.env/
+.gitignore/
