@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MAYAMI settings</title>
+    <style>
+      body { max-width: 560px; margin: 32px auto; padding: 0 16px; font: 14px/1.5 system-ui, sans-serif; color: #18181b; }
+      h1 { font-size: 20px; } h2 { font-size: 15px; margin-top: 28px; }
+      label { display: block; margin: 12px 0 4px; font-weight: 600; }
+      input[type="text"], input[type="password"], textarea {
+        width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d4d4d8; border-radius: 6px; font: inherit;
+      }
+      textarea { min-height: 140px; }
+      .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+      button { padding: 8px 14px; border: 0; border-radius: 6px; background: #18181b; color: #fff; font-weight: 600; cursor: pointer; }
+      .msg { margin-left: 8px; color: #52525b; }
+      .chips span { display: inline-block; margin: 2px; padding: 1px 8px; border-radius: 999px; background: #f4f4f5; font-size: 12px; }
+      .chips.match span { background: #dcfce7; } .chips.miss span { background: #fee2e2; }
+      small { color: #71717a; }
+    </style>
+  </head>
+  <body>
+    <h1>MAYAMI settings</h1>
+
+    <label for="serverUrl">Server URL</label>
+    <input id="serverUrl" type="text" placeholder="ws://localhost:8000 or wss://your-host" />
+    <label for="apiKey">API key</label>
+    <input id="apiKey" type="password" placeholder="Matches MAYAMI_API_KEY on the server" />
+    <label for="profileId">Profile ID</label>
+    <input id="profileId" type="text" placeholder="default" />
+    <small>One profile per resume + job description pair, e.g. <code>acme-backend</code>.</small>
+    <div class="row">
+      <input id="captureMic" type="checkbox" /><span>Also capture my microphone (adds your answers as conversation context)</span>
+    </div>
+    <div class="row">
+      <button id="save">Save</button>
+      <button id="grantMic">Grant microphone access</button>
+      <span class="msg" id="settingsMsg"></span>
+    </div>
+
+    <h2>Resume &amp; job description</h2>
+    <label for="resume">Resume (.pdf, .docx, .txt, .md)</label>
+    <input id="resume" type="file" accept=".pdf,.docx,.txt,.md" />
+    <label for="jd">Job description</label>
+    <textarea id="jd" placeholder="Paste the job description"></textarea>
+    <div class="row"><button id="upload">Upload to profile</button><span class="msg" id="uploadMsg"></span></div>
+
+    <div id="summary"></div>
+    <script src="options.js" type="module"></script>
+  </body>
+</html>
