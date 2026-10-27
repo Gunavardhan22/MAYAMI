@@ -17,6 +17,7 @@
       .chips span { display: inline-block; margin: 2px; padding: 1px 8px; border-radius: 999px; background: #f4f4f5; font-size: 12px; }
       .chips.match span { background: #dcfce7; } .chips.miss span { background: #fee2e2; }
       small { color: #71717a; }
+      #connMsg { margin: 12px 0 0; font-weight: 600; } #connMsg.ok { color: #15803d; } #connMsg.bad { color: #b91c1c; }
     </style>
   </head>
   <body>
@@ -37,6 +38,7 @@
       <button id="grantMic">Grant microphone access</button>
       <span class="msg" id="settingsMsg"></span>
     </div>
+    <p id="connMsg"></p>
 
     <h2>Resume &amp; job description</h2>
     <label for="resume">Resume (.pdf, .docx, .txt, .md)</label>

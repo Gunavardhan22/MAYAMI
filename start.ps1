@@ -60,7 +60,7 @@ if ($busy) {
 Write-Host @"
 
 Extension: load (or reload) extension\dist in chrome://extensions (Developer mode > Load unpacked).
-Options:   server ws://localhost:8000, API key = MAYAMI_API_KEY from backend\.env.
+Options:   server URL and API key are pre-filled from backend\.env; the page shows whether it's connected.
 "@ -ForegroundColor Green
 
 Step "Starting the backend on http://localhost:8000 (Ctrl+C to stop)"

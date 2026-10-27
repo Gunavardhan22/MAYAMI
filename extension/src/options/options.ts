@@ -42,11 +42,24 @@ function renderSummary(p: ProfileSummary) {
     <label>All resume skills</label>${chips(p.resume_skills)}`;
 }
 
+/** Check the backend is reachable, accepts the key and has Gemini set up, then show the profile. */
 async function loadSummary() {
+  const conn = $("connMsg");
   try {
+    const health = await api<{ google_configured: boolean }>("/health");
     renderSummary(await api<ProfileSummary>(`/api/profiles/${encodeURIComponent(readForm().profileId)}`));
-  } catch {
+    conn.textContent = health.google_configured
+      ? "Connected to the backend."
+      : "Connected, but the backend has no GOOGLE_API_KEY in backend/.env.";
+    conn.className = health.google_configured ? "ok" : "bad";
+  } catch (err) {
     $("summary").innerHTML = "";
+    // fetch throws a TypeError when nothing answers at that address.
+    conn.textContent =
+      err instanceof TypeError
+        ? `Can't reach the backend at ${httpBase(readForm().serverUrl)}. Is it running?`
+        : `Backend refused the request: ${(err as Error).message}`;
+    conn.className = "bad";
   }
 }
 
