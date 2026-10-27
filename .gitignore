@@ -12,3 +12,14 @@ extension/.harness/
 requirenments./
 .env/
 .gitignore/
+.cmd/
+.md/
+
+# Local-only docs and launchers
+README.md
+*.cmd
+
+# Desktop app build output
+desktop/node_modules/
+desktop/out/
+desktop/dist/
