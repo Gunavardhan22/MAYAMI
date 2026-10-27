@@ -78,32 +78,45 @@ function connect() {
   const url = new URL(settings.serverUrl.replace(/\/+$/, "") + "/ws");
   url.searchParams.set("profile", settings.profileId);
   if (settings.apiKey) url.searchParams.set("token", settings.apiKey);
+  // Same URL with the key masked, for the console.
+  const shown = new URL(url);
+  if (shown.searchParams.has("token")) shown.searchParams.set("token", "***");
 
   report({ connection: attempt === 0 ? "connecting" : "reconnecting" });
+  console.info(`[MAYAMI] Connecting to ${shown} (attempt ${attempt + 1})`);
   const socket = new WebSocket(url);
   socket.binaryType = "arraybuffer";
   ws = socket;
 
   socket.onopen = () => {
     attempt = 0;
+    console.info("[MAYAMI] Connected to the backend");
     report({ connection: "connected", detail: undefined });
   };
   socket.onmessage = (e) => {
     try {
-      relay(JSON.parse(e.data as string) as ServerEvent);
+      const event = JSON.parse(e.data as string) as ServerEvent;
+      if (event.type === "error") console.error(`[MAYAMI] Server error: ${event.payload}`);
+      relay(event);
     } catch {
-      /* ignore malformed frames */
+      console.warn("[MAYAMI] Ignored a malformed frame from the server", e.data);
     }
   };
+  // The browser gives no detail here on purpose; the close event that follows has the code.
+  socket.onerror = () => console.error(`[MAYAMI] WebSocket error talking to ${shown}. Is the backend running?`);
   socket.onclose = (e) => {
     if (ws !== socket || stopped) return;
     ws = null;
+    // 1006 = closed without a handshake: the server is down, unreachable, or the URL is wrong.
+    console.warn(`[MAYAMI] Connection closed: code ${e.code}${e.reason ? ` (${e.reason})` : ""}`);
     if (FATAL_CLOSE_CODES.has(e.code)) {
+      console.error("[MAYAMI] The server rejected the connection; not retrying. Check the API key and profile ID.");
       report({ connection: "error", detail: e.reason || "Server rejected the connection (check API key / profile)." });
       return;
     }
     const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** attempt) * (0.75 + Math.random() * 0.5);
     attempt++;
+    console.info(`[MAYAMI] Reconnecting in ${Math.round(delay / 1000)}s`);
     report({ connection: "reconnecting", detail: `Reconnecting in ${Math.round(delay / 1000)}s...` });
     retryTimer = self.setTimeout(connect, delay);
   };
@@ -161,6 +174,7 @@ chrome.runtime.onMessage.addListener((msg: ToOffscreen) => {
   switch (msg.type) {
     case "start":
       start(msg.streamId, msg.settings).catch((err) => {
+        console.error("[MAYAMI] Could not start audio capture", err);
         stop();
         report({ connection: "error", capturing: false, detail: String(err?.message ?? err) });
       });

@@ -15,6 +15,7 @@ from .rag import get_store
 from .session import InterviewSession
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("mayami.ws")
 
 settings = get_settings()
 
@@ -108,14 +109,29 @@ async def interview_socket(
     profile: str = Query(...),
     token: str | None = Query(default=None),
 ) -> None:
+    peer = f"{ws.client.host}:{ws.client.port}" if ws.client else "unknown"
     # Browsers can't set headers on WebSocket handshakes, so the key travels as a query param.
+    # Rejections accept first and then close: closing before the handshake becomes an HTTP 403,
+    # which browsers report as a generic 1006 failure, so the client would never see why.
     if not _token_ok(token):
+        log.warning("Rejected WebSocket from %s: %s API key", peer, "missing" if not token else "wrong")
+        await ws.accept()
         await ws.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid API key")
         return
     try:
         profile = get_store().validate_profile_id(profile)
     except ValueError as exc:
-        await ws.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc))
+        log.warning("Rejected WebSocket from %s: bad profile id (%s)", peer, exc)
+        await ws.accept()
+        # Close reasons are capped at 123 bytes by the protocol.
+        await ws.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc)[:120])
         return
     await ws.accept()
-    await InterviewSession(ws, profile, client, gemini).run()
+    log.info("WebSocket connected: profile=%s from %s", profile, peer)
+    try:
+        await InterviewSession(ws, profile, client, gemini).run()
+    except Exception:
+        log.exception("WebSocket session crashed: profile=%s", profile)
+        raise
+    finally:
+        log.info("WebSocket closed: profile=%s from %s", profile, peer)

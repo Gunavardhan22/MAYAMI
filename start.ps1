@@ -3,7 +3,8 @@
 #   2. installs and builds the Chrome extension into extension/dist
 #   3. runs the backend on http://localhost:8000 (Ctrl+C to stop)
 # Use -Docker to run the backend with docker compose instead (needs Docker Desktop running).
-param([switch]$Docker, [switch]$SkipBuild)
+# Use -Dev to run the extension's Vite dev server (rebuilds on save) in a second window instead of a one-off build.
+param([switch]$Docker, [switch]$SkipBuild, [switch]$Dev)
 
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
@@ -26,12 +27,21 @@ if (-not (Select-String -Path $envFile -Pattern '^GOOGLE_API_KEY=\S+' -Quiet)) {
 
 # --- extension -----------------------------------------------------------------------
 if (-not $SkipBuild) {
-    Step "Building the Chrome extension"
     Push-Location $extension
     try {
-        if (-not (Test-Path "node_modules")) { npm install --no-audit --no-fund }
-        npm run build
-        if ($LASTEXITCODE -ne 0) { throw "Extension build failed" }
+        if (-not (Test-Path "node_modules")) {
+            Step "Installing the extension's Node modules"
+            npm install --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+        }
+        if ($Dev) {
+            Step "Starting the extension dev server in a new window (rebuilds extension\dist on save)"
+            Start-Process powershell -WorkingDirectory $extension -ArgumentList "-NoExit", "-Command", "npm run dev"
+        } else {
+            Step "Building the Chrome extension"
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw "Extension build failed" }
+        }
     } finally { Pop-Location }
 }
 
@@ -51,9 +61,16 @@ if (-not (Test-Path $python)) {
     & $python -m pip install -r (Join-Path $backend "requirements.txt")
 }
 
-$busy = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+$busy = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($busy) {
-    Write-Host "Port 8000 is already in use (pid $($busy.OwningProcess)). Stop that process first." -ForegroundColor Yellow
+    # A MAYAMI backend that is already up is fine; anything else on the port is a real conflict.
+    try { $health = Invoke-RestMethod http://127.0.0.1:8000/health -TimeoutSec 3 } catch { $health = $null }
+    if ($health.status -eq "ok") {
+        Write-Host "`nThe MAYAMI backend is already running on http://localhost:8000 (pid $($busy.OwningProcess))." -ForegroundColor Green
+        Write-Host "Load or reload extension\dist in chrome://extensions. To restart the backend, stop pid $($busy.OwningProcess) and run this again."
+        exit 0
+    }
+    Write-Host "Port 8000 is used by another program (pid $($busy.OwningProcess)). Stop it, then run this again." -ForegroundColor Yellow
     exit 1
 }
 

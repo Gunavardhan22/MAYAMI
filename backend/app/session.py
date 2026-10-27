@@ -79,6 +79,7 @@ class InterviewSession:
 
             stream = LiveTranscriber(self.client, on_transcript, on_utterance)
             await stream.start()
+            log.info("Transcription started for the %s (first audio received)", speaker)
             self.streams[channel] = stream
         return stream
 

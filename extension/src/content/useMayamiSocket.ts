@@ -61,6 +61,8 @@ function dispatch(event: ServerEvent) {
 }
 
 function showError(message: string) {
+  // Also in the meeting tab's console, so errors are visible without the overlay.
+  console.warn(`[MAYAMI] ${message}`);
   useSystemStore.getState().setError(message);
   clearTimeout(errorTimer);
   errorTimer = setTimeout(() => useSystemStore.getState().setError(null), 8000);
