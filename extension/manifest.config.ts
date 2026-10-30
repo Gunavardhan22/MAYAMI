@@ -9,6 +9,7 @@ export default defineManifest({
   description: "Real-time, resume-grounded answer suggestions during browser-based interviews.",
   minimum_chrome_version: "116",
   permissions: ["tabCapture", "offscreen", "storage", "activeTab"],
+  host_permissions: ["http://localhost/*", "http://127.0.0.1/*"],
   background: { service_worker: "src/background/index.ts", type: "module" },
   action: { default_popup: "src/popup/popup.html", default_title: "MAYAMI" },
   options_page: "src/options/options.html",
